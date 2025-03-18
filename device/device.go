@@ -95,6 +95,7 @@ type Device struct {
 	isASecOn abool.AtomicBool
 	aSecMux  sync.RWMutex
 	aSecCfg  aSecCfgType
+	junkCreator junkCreator
 }
 
 type aSecCfgType struct {
@@ -799,6 +800,7 @@ func (device *Device) handlePostConfig(tempASecCfg *aSecCfgType) (err error) {
 	}
 
 	device.isASecOn.SetTo(isASecOn)
+	device.junkCreator, err = NewJunkCreator(device)
 	device.aSecMux.Unlock()
 
 	return err

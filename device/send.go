@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"math/rand"
 	"net"
 	"os"
 	"sync"
@@ -129,7 +128,7 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	var junkedHeader []byte
 	if peer.device.isAdvancedSecurityOn() {
 		peer.device.aSecMux.RLock()
-		junks, err := peer.createJunkPackets()
+		junks, err := peer.device.junkCreator.createJunkPackets()
 		peer.device.aSecMux.RUnlock()
 
 		if err != nil {
@@ -150,7 +149,7 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		if peer.device.aSecCfg.initPacketJunkSize != 0 {
 			buf := make([]byte, 0, peer.device.aSecCfg.initPacketJunkSize)
 			writer := bytes.NewBuffer(buf[:0])
-			err = appendJunk(writer, peer.device.aSecCfg.initPacketJunkSize)
+			err = peer.device.junkCreator.appendJunk(writer, peer.device.aSecCfg.initPacketJunkSize)
 			if err != nil {
 				peer.device.log.Errorf("%v - %v", peer, err)
 				peer.device.aSecMux.RUnlock()
@@ -200,7 +199,7 @@ func (peer *Peer) SendHandshakeResponse() error {
 		if peer.device.aSecCfg.responsePacketJunkSize != 0 {
 			buf := make([]byte, 0, peer.device.aSecCfg.responsePacketJunkSize)
 			writer := bytes.NewBuffer(buf[:0])
-			err = appendJunk(writer, peer.device.aSecCfg.responsePacketJunkSize)
+			err = peer.device.junkCreator.appendJunk(writer, peer.device.aSecCfg.responsePacketJunkSize)
 			if err != nil {
 				peer.device.aSecMux.RUnlock()
 				peer.device.log.Errorf("%v - %v", peer, err)
@@ -467,31 +466,6 @@ top:
 			return
 		}
 	}
-}
-
-func (peer *Peer) createJunkPackets() ([][]byte, error) {
-	if peer.device.aSecCfg.junkPacketCount == 0 {
-		return nil, nil
-	}
-
-	junks := make([][]byte, 0, peer.device.aSecCfg.junkPacketCount)
-	for i := 0; i < peer.device.aSecCfg.junkPacketCount; i++ {
-		packetSize := rand.Intn(
-			peer.device.aSecCfg.junkPacketMaxSize-peer.device.aSecCfg.junkPacketMinSize,
-		) + peer.device.aSecCfg.junkPacketMinSize
-
-		junk, err := randomJunkWithSize(packetSize)
-		if err != nil {
-			peer.device.log.Errorf(
-				"%v - Failed to create junk packet: %v",
-				peer,
-				err,
-			)
-			return nil, err
-		}
-		junks = append(junks, junk)
-	}
-	return junks, nil
 }
 
 func (peer *Peer) FlushStagedPackets() {

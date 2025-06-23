@@ -92,9 +92,9 @@ type Device struct {
 	closed   chan struct{}
 	log      *Logger
 
-	isASecOn abool.AtomicBool
-	aSecMux  sync.RWMutex
-	aSecCfg  aSecCfgType
+	isASecOn    abool.AtomicBool
+	aSecMux     sync.RWMutex
+	aSecCfg     aSecCfgType
 	junkCreator junkCreator
 }
 

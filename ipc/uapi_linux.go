@@ -8,6 +8,7 @@ package ipc
 import (
 	"net"
 	"os"
+	"path/filepath" // Ensure this is imported
 
 	"github.com/amnezia-vpn/amneziawg-go/rwcancel"
 	"golang.org/x/sys/unix"
@@ -68,9 +69,16 @@ func UAPIListen(rootdir string, name string, file *os.File) (net.Listener, error
 		connErr:  make(chan error, 1),
 	}
 
-	// watch for deletion of socket
+	// build socketDirectory dynamically, matching UAPIOpen
+	socketDirectory := filepath.Join("/data/data", rootdir, "sockets")
+	socketPath := sockPath(socketDirectory, name)
 
-	socketPath := sockPath(rootdir, name)
+	_, err = net.ResolveUnixAddr("unix", socketPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// watch for deletion of socket
 
 	uapi.inotifyFd, err = unix.InotifyInit()
 	if err != nil {

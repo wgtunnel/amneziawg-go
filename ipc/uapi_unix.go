@@ -9,9 +9,9 @@ package ipc
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -24,20 +24,17 @@ const (
 	IpcErrorUnknown   = -55 // ENOANO
 )
 
-// socketDirectory is variable because it is modified by a linker
-// flag in wireguard-android.
-var socketDirectory = "/var/run/amneziawg"
-
-func sockPath(iface string) string {
-	return fmt.Sprintf("%s/%s.sock", socketDirectory, iface)
+func sockPath(socketDirectory, iface string) string {
+	return filepath.Join(socketDirectory, iface+".sock") // Use filepath.Join for safe path construction
 }
 
-func UAPIOpen(name string) (*os.File, error) {
+func UAPIOpen(rootdir string, name string) (*os.File, error) {
+	socketDirectory := filepath.Join("/data/data", rootdir, "sockets") // Dynamically build using rootdir (package name)
 	if err := os.MkdirAll(socketDirectory, 0o755); err != nil {
 		return nil, err
 	}
 
-	socketPath := sockPath(name)
+	socketPath := sockPath(socketDirectory, name)
 	addr, err := net.ResolveUnixAddr("unix", socketPath)
 	if err != nil {
 		return nil, err

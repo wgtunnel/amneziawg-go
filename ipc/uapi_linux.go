@@ -50,7 +50,7 @@ func (l *UAPIListener) Addr() net.Addr {
 	return l.listener.Addr()
 }
 
-func UAPIListen(name string, file *os.File) (net.Listener, error) {
+func UAPIListen(rootdir string, name string, file *os.File) (net.Listener, error) {
 	// wrap file in listener
 
 	listener, err := net.FileListener(file)
@@ -70,7 +70,7 @@ func UAPIListen(name string, file *os.File) (net.Listener, error) {
 
 	// watch for deletion of socket
 
-	socketPath := sockPath(name)
+	socketPath := sockPath(rootdir, name)
 
 	uapi.inotifyFd, err = unix.InotifyInit()
 	if err != nil {

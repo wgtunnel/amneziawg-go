@@ -157,7 +157,7 @@ func main() {
 	fileUAPI, err := func() (*os.File, error) {
 		uapiFdStr := os.Getenv(ENV_WG_UAPI_FD)
 		if uapiFdStr == "" {
-			return ipc.UAPIOpen(interfaceName)
+			return ipc.UAPIOpen("", interfaceName) // Pass empty string for rootdir on non-Android
 		}
 
 		// use supplied fd
@@ -229,7 +229,7 @@ func main() {
 	errs := make(chan error)
 	term := make(chan os.Signal, 1)
 
-	uapi, err := ipc.UAPIListen(interfaceName, fileUAPI)
+	uapi, err := ipc.UAPIListen("", interfaceName, fileUAPI) // Pass empty string for rootdir on non-Android
 	if err != nil {
 		logger.Errorf("Failed to listen on uapi socket: %v", err)
 		os.Exit(ExitSetupFailed)

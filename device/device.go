@@ -63,9 +63,10 @@ type Device struct {
 		limiter        ratelimiter.Ratelimiter
 	}
 
-	allowedips    AllowedIPs
-	indexTable    IndexTable
-	cookieChecker CookieChecker
+	allowedips            AllowedIPs
+	indexTable            IndexTable
+	cookieChecker         CookieChecker
+	domainBlockingEnabled bool
 
 	pool struct {
 		inboundElementsContainer  *WaitPool
@@ -304,11 +305,12 @@ func (device *Device) SetPrivateKey(sk NoisePrivateKey) error {
 	return nil
 }
 
-func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
+func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger, domainBlockingEnabled bool) *Device {
 	device := new(Device)
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
 	device.log = logger
+	device.domainBlockingEnabled = domainBlockingEnabled
 	device.net.bind = bind
 	device.tun.device = tunDevice
 	mtu, err := device.tun.device.MTU()

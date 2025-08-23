@@ -46,6 +46,7 @@ type StdNetBind struct {
 
 	blackhole4 bool
 	blackhole6 bool
+	control    func(network, address string, c syscall.RawConn) error //for bypass callback
 }
 
 func NewStdNetBind() Bind {
@@ -119,8 +120,8 @@ func (e *StdNetEndpoint) DstToString() string {
 	return e.AddrPort.String()
 }
 
-func listenNet(network string, port int) (*net.UDPConn, int, error) {
-	conn, err := listenConfig().ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
+func (s *StdNetBind) listenNet(network string, port int) (*net.UDPConn, int, error) {
+	conn, err := s.listenConfig().ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -156,13 +157,13 @@ again:
 	var v4pc *ipv4.PacketConn
 	var v6pc *ipv6.PacketConn
 
-	v4conn, port, err = listenNet("udp4", port)
+	v4conn, port, err = s.listenNet("udp4", port)
 	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
 		return nil, 0, err
 	}
 
 	// Listen on the same port as we're using for ipv4.
-	v6conn, port, err = listenNet("udp6", port)
+	v6conn, port, err = s.listenNet("udp6", port)
 	if uport == 0 && errors.Is(err, syscall.EADDRINUSE) && tries < 100 {
 		v4conn.Close()
 		tries++
@@ -325,6 +326,10 @@ func (s *StdNetBind) Close() error {
 	return err2
 }
 
+func (s *StdNetBind) SetControl(f func(network, address string, c syscall.RawConn) error) {
+	s.control = f
+}
+
 type ErrUDPGSODisabled struct {
 	onLaddr  string
 	RetryErr error
@@ -407,6 +412,36 @@ retry:
 		return ErrUDPGSODisabled{onLaddr: conn.LocalAddr().String(), RetryErr: err}
 	}
 	return err
+}
+
+func (s *StdNetBind) listenConfig() *net.ListenConfig {
+	return &net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			// Optionally set platform-specific socket options here (before or after user control).
+			// Example for Android/Linux: enable SO_REUSEADDR and SO_REUSEPORT.
+			var opErr error
+			err := c.Control(func(fd uintptr) {
+				// Set SO_REUSEADDR
+				if err := syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
+					opErr = err
+					return
+				}
+				// Add other options as needed, e.g., IP_MTU_DISCOVER for PMTU.
+			})
+			if err != nil {
+				return err
+			}
+			if opErr != nil {
+				return opErr
+			}
+
+			// Invoke the user-set control callback if present for bypassing the socket
+			if s.control != nil {
+				return s.control(network, address, c)
+			}
+			return nil
+		},
+	}
 }
 
 func (s *StdNetBind) send(conn *net.UDPConn, pc batchWriter, msgs []ipv6.Message) error {

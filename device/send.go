@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
-	"github.com/amnezia-vpn/amneziawg-go/dns"
+	"github.com/amnezia-vpn/amneziawg-go/filter"
 	"github.com/amnezia-vpn/amneziawg-go/tun"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/net/ipv4"
@@ -355,8 +355,8 @@ func (device *Device) RoutineReadFromTUN() {
 				elemsByPeer[peer] = elemsForPeer
 			}
 
-			if device.domainBlockingEnabled && dns.IsDNSPacket(elem.packet) {
-				if isBlocked, _ := dns.IsBlockedDomain(elem.packet, device.blockedDomains); isBlocked {
+			if device.domainBlockingEnabled && filter.IsDNSPacket(elem.packet) {
+				if isBlocked, _ := filter.IsBlockedDomain(elem.packet, device.blockedDomains); isBlocked {
 					// Drop the packet
 					continue
 				}

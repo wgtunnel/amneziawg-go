@@ -1,4 +1,4 @@
-package dns
+package filter
 
 import (
 	"encoding/binary"

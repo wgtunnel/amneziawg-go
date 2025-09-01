@@ -12,21 +12,21 @@ type IpcFields struct{ Key, Value string }
 type EnumTag string
 
 const (
-	BytesEnumTag        EnumTag = "b"
-	CounterEnumTag      EnumTag = "c"
-	TimestampEnumTag    EnumTag = "t"
-	RandomBytesEnumTag  EnumTag = "r"
-	WaitTimeoutEnumTag  EnumTag = "wt"
-	WaitResponseEnumTag EnumTag = "wr"
+	BytesEnumTag       EnumTag = "b"
+	CounterEnumTag     EnumTag = "c"
+	TimestampEnumTag   EnumTag = "t"
+	RandomBytesEnumTag EnumTag = "r"
+	RandomASCIIEnumTag EnumTag = "rc"
+	RandomDigitEnumTag EnumTag = "rd"
 )
 
 var generatorCreator = map[EnumTag]newGenerator{
 	BytesEnumTag:       newBytesGenerator,
 	CounterEnumTag:     newPacketCounterGenerator,
 	TimestampEnumTag:   newTimestampGenerator,
-	RandomBytesEnumTag: newRandomPacketGenerator,
-	WaitTimeoutEnumTag: newWaitTimeoutGenerator,
-	// WaitResponseEnumTag: newWaitResponseGenerator,
+	RandomBytesEnumTag: newRandomBytesGenerator,
+	RandomASCIIEnumTag: newRandomASCIIGenerator,
+	RandomDigitEnumTag: newRandomDigitGenerator,
 }
 
 // helper map to determine enumTags are unique
@@ -55,7 +55,7 @@ func parseTag(input string) (Tag, error) {
 	return tag, nil
 }
 
-func Parse(name, input string) (TagJunkPacketGenerator, error) {
+func ParseTagJunkGenerator(name, input string) (TagJunkPacketGenerator, error) {
 	inputSlice := strings.Split(input, "<")
 	if len(inputSlice) <= 1 {
 		return TagJunkPacketGenerator{}, fmt.Errorf("empty input: %s", input)

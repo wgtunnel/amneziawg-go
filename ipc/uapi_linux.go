@@ -69,8 +69,7 @@ func UAPIListen(rootdir string, name string, file *os.File) (net.Listener, error
 		connErr:  make(chan error, 1),
 	}
 
-	// build socketDirectory dynamically, matching UAPIOpen
-	socketDirectory := filepath.Join("/data/data", rootdir, "sockets")
+	socketDirectory := filepath.Join(rootdir, "sockets")
 	socketPath := sockPath(socketDirectory, name)
 
 	_, err = net.ResolveUnixAddr("unix", socketPath)

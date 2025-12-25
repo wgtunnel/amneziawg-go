@@ -29,7 +29,7 @@ func sockPath(socketDirectory, iface string) string {
 }
 
 func UAPIOpen(rootdir string, name string) (*os.File, error) {
-	socketDirectory := filepath.Join("/data/data", rootdir, "sockets") // Dynamically build using rootdir (package name)
+	socketDirectory := filepath.Join(rootdir, "sockets")
 	if err := os.MkdirAll(socketDirectory, 0o755); err != nil {
 		return nil, err
 	}

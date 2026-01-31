@@ -420,6 +420,7 @@ func (device *Device) RoutineHandshake(id int) {
 			peer.SetEndpointFromPacket(elem.endpoint)
 
 			device.log.Verbosef("%v - Received handshake response", peer)
+			device.statusCB(StatusHealthy)
 			peer.rxBytes.Add(uint64(len(elem.packet)))
 
 			// update timers
@@ -483,6 +484,7 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 
 			if len(elem.packet) == 0 {
 				device.log.Verbosef("%v - Receiving keepalive packet", peer)
+				device.statusCB(StatusHealthy)
 				continue
 			}
 			dataPacketReceived = true

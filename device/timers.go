@@ -79,7 +79,7 @@ func (peer *Peer) timersActive() bool {
 func expiredRetransmitHandshake(peer *Peer) {
 	if peer.timers.handshakeAttempts.Load() > MaxTimerHandshakes {
 		peer.device.log.Verbosef("%s - Handshake did not complete after %d attempts, giving up", peer, MaxTimerHandshakes+2)
-
+		peer.device.statusCB(StatusHandshakeFailure)
 		if peer.timersActive() {
 			peer.timers.sendKeepalive.Del()
 		}
@@ -98,6 +98,7 @@ func expiredRetransmitHandshake(peer *Peer) {
 	} else {
 		peer.timers.handshakeAttempts.Add(1)
 		peer.device.log.Verbosef("%s - Handshake did not complete after %d seconds, retrying (try %d)", peer, int(RekeyTimeout.Seconds()), peer.timers.handshakeAttempts.Load()+1)
+		peer.device.statusCB(StatusHandshakeFailure)
 
 		/* We clear the endpoint address src address, in case this is the cause of trouble. */
 		peer.markEndpointSrcForClearing()
@@ -118,6 +119,8 @@ func expiredSendKeepalive(peer *Peer) {
 
 func expiredNewHandshake(peer *Peer) {
 	peer.device.log.Verbosef("%s - Retrying handshake because we stopped hearing back after %d seconds", peer, int((KeepaliveTimeout + RekeyTimeout).Seconds()))
+	peer.device.statusCB(StatusHandshakeFailure)
+
 	/* We clear the endpoint address src address, in case this is the cause of trouble. */
 	peer.markEndpointSrcForClearing()
 	peer.SendHandshakeInitiation(false)

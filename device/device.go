@@ -18,7 +18,8 @@ import (
 )
 
 type Device struct {
-	state struct {
+	statusCB func(StatusCode)
+	state    struct {
 		// state holds the device's state. It is accessed atomically.
 		// Use the device.deviceState method to read it.
 		// device.deviceState does not acquire the mutex, so it captures only a snapshot.
@@ -305,8 +306,9 @@ func (device *Device) SetPrivateKey(sk NoisePrivateKey) error {
 	return nil
 }
 
-func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger, domainBlockingEnabled bool) *Device {
+func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger, domainBlockingEnabled bool, statusCB func(code StatusCode)) *Device {
 	device := new(Device)
+	device.statusCB = statusCB
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
 	device.log = logger

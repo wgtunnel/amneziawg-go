@@ -53,7 +53,7 @@ func (l *UAPIListener) Addr() net.Addr {
 	return l.listener.Addr()
 }
 
-func UAPIListen(name string, file *os.File) (net.Listener, error) {
+func UAPIListen(rootDir string, name string, file *os.File) (net.Listener, error) {
 	// wrap file in listener
 
 	listener, err := net.FileListener(file)
@@ -71,7 +71,7 @@ func UAPIListen(name string, file *os.File) (net.Listener, error) {
 		unixListener.SetUnlinkOnClose(true)
 	}
 
-	socketPath := sockPath(name)
+	socketPath := sockPath(rootDir, name)
 
 	// watch for deletion of socket
 
@@ -79,7 +79,7 @@ func UAPIListen(name string, file *os.File) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	uapi.keventFd, err = unix.Open(socketDirectory, unix.O_RDONLY, 0)
+	uapi.keventFd, err = unix.Open(rootDir, unix.O_RDONLY, 0)
 	if err != nil {
 		unix.Close(uapi.kqueueFd)
 		return nil, err

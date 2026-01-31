@@ -51,7 +51,7 @@ func (l *UAPIListener) Addr() net.Addr {
 	return l.listener.Addr()
 }
 
-func UAPIListen(rootdir string, name string, file *os.File) (net.Listener, error) {
+func UAPIListen(rootDir string, name string, file *os.File) (net.Listener, error) {
 	// wrap file in listener
 
 	listener, err := net.FileListener(file)
@@ -69,7 +69,7 @@ func UAPIListen(rootdir string, name string, file *os.File) (net.Listener, error
 		connErr:  make(chan error, 1),
 	}
 
-	socketDirectory := filepath.Join(rootdir, "sockets")
+	socketDirectory := filepath.Join(rootDir, "sockets")
 	socketPath := sockPath(socketDirectory, name)
 
 	_, err = net.ResolveUnixAddr("unix", socketPath)

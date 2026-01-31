@@ -417,16 +417,12 @@ retry:
 func (s *StdNetBind) listenConfig() *net.ListenConfig {
 	return &net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
-			// Optionally set platform-specific socket options here (before or after user control).
-			// Example for Android/Linux: enable SO_REUSEADDR and SO_REUSEPORT.
 			var opErr error
 			err := c.Control(func(fd uintptr) {
-				// Set SO_REUSEADDR
-				if err := syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
-					opErr = err
+				if e := setSocketOptions(fd); e != nil {
+					opErr = e
 					return
 				}
-				// Add other options as needed, e.g., IP_MTU_DISCOVER for PMTU.
 			})
 			if err != nil {
 				return err
@@ -435,7 +431,6 @@ func (s *StdNetBind) listenConfig() *net.ListenConfig {
 				return opErr
 			}
 
-			// Invoke the user-set control callback if present for bypassing the socket
 			if s.control != nil {
 				return s.control(network, address, c)
 			}

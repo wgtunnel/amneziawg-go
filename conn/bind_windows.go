@@ -62,6 +62,15 @@ func (rb *ringBuffer) Return(count uint32) {
 	rb.isFull = false
 }
 
+func setSocketOptions(fd uintptr) error {
+	return windows.SetsockoptInt(
+		windows.Handle(fd),
+		windows.SOL_SOCKET,
+		windows.SO_REUSEADDR,
+		1,
+	)
+}
+
 type afWinRingBind struct {
 	sock      windows.Handle
 	rx, tx    ringBuffer

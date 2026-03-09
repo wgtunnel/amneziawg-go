@@ -1,6 +1,6 @@
 module github.com/amnezia-vpn/amneziawg-go
 
-go 1.25.1
+go 1.24.4
 
 require (
 	go.uber.org/atomic v1.11.0

@@ -222,7 +222,9 @@ func main() {
 		return
 	}
 
-	device := device.NewDevice(tdev, conn.NewDefaultBind(), logger, false)
+	device := device.NewDevice(tdev, conn.NewDefaultBind(), logger, func(code device.StatusCode) {
+		// callback for tunnel status codes
+	})
 
 	logger.Verbosef("Device started")
 

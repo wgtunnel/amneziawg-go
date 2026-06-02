@@ -343,14 +343,6 @@ func (device *Device) RoutineReadFromTUN() {
 				elemsByPeer[peer] = elemsForPeer
 			}
 
-			// TODO
-			//if device.domainBlockingEnabled && dns.IsDNSPacket(elem.packet) {
-			//	if isBlocked, _ := dns.IsBlockedDomain(elem.packet, device.blockedDomains); isBlocked {
-			//		// Drop the packet
-			//		continue
-			//	}
-			//}
-
 			elemsForPeer.elems = append(elemsForPeer.elems, elem)
 			elems[i] = device.NewOutboundElement()
 			bufs[i] = elems[i].buffer[:]

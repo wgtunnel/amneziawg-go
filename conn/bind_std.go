@@ -79,7 +79,6 @@ func NewStdNetBindWithControl(
 	s.lc = &net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			var opErr error
-
 			err := c.Control(func(fd uintptr) {
 				if e := setSocketOptions(fd); e != nil {
 					opErr = e
@@ -92,11 +91,9 @@ func NewStdNetBindWithControl(
 			if opErr != nil {
 				return opErr
 			}
-
 			if control != nil {
 				return control(network, address, c)
 			}
-
 			return nil
 		},
 	}
@@ -105,7 +102,28 @@ func NewStdNetBindWithControl(
 }
 
 func NewStdNetBind() Bind {
-	return NewStdNetBindWithControl(nil)
+	return &StdNetBind{
+		udpAddrPool: sync.Pool{
+			New: func() any {
+				return &net.UDPAddr{
+					IP: make([]byte, 16),
+				}
+			},
+		},
+
+		msgsPool: sync.Pool{
+			New: func() any {
+				// ipv6.Message and ipv4.Message are interchangeable as they are
+				// both aliases for x/net/internal/socket.Message.
+				msgs := make([]ipv6.Message, IdealBatchSize)
+				for i := range msgs {
+					msgs[i].Buffers = make(net.Buffers, 1)
+					msgs[i].OOB = make([]byte, 0, stickyControlSize+gsoControlSize)
+				}
+				return &msgs
+			},
+		},
+	}
 }
 
 type StdNetEndpoint struct {
@@ -155,25 +173,31 @@ func (e *StdNetEndpoint) DstToString() string {
 }
 
 func (s *StdNetBind) listenNet(network string, port int) (*net.UDPConn, int, error) {
-	conn, err := s.lc.ListenPacket(
-		context.Background(),
-		network,
-		":"+strconv.Itoa(port),
-	)
+	var packetConn net.PacketConn
+	var err error
+
+	if s.lc != nil {
+		// Lockdown mode path
+		packetConn, err = s.lc.ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
+	} else {
+		// Normal path
+		packetConn, err = listenConfig().ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
+	}
 	if err != nil {
 		return nil, 0, err
 	}
-
-	// Retrieve port.
-	laddr := conn.LocalAddr()
+	
+	laddr := packetConn.LocalAddr()
 	uaddr, err := net.ResolveUDPAddr(
 		laddr.Network(),
 		laddr.String(),
 	)
 	if err != nil {
+		packetConn.Close()
 		return nil, 0, err
 	}
-	return conn.(*net.UDPConn), uaddr.Port, nil
+
+	return packetConn.(*net.UDPConn), uaddr.Port, nil
 }
 
 func (s *StdNetBind) Open(uport uint16) ([]ReceiveFunc, uint16, error) {

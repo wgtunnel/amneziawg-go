@@ -3,8 +3,6 @@
 package conn
 
 import (
-	"runtime"
-
 	"golang.org/x/sys/unix"
 )
 
@@ -13,9 +11,9 @@ func setSocketOptions(fd uintptr) error {
 		return err
 	}
 
-	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
-		_ = unix.SetsockoptInt(int(fd), unix.SOL_UDP, unix.UDP_GRO, 1)
-	}
+	// Mirror upstream wireguard-go buffer sizes
+	_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_RCVBUF, socketBufferSize)
+	_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_SNDBUF, socketBufferSize)
 
 	return nil
 }

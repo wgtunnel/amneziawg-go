@@ -46,11 +46,14 @@ type StdNetBind struct {
 
 	blackhole4 bool
 	blackhole6 bool
-	control    func(network, address string, c syscall.RawConn) error //for bypass callback
+
+	lc *net.ListenConfig
 }
 
-func NewStdNetBind() Bind {
-	return &StdNetBind{
+func NewStdNetBindWithControl(
+	control func(network, address string, c syscall.RawConn) error,
+) Bind {
+	s := &StdNetBind{
 		udpAddrPool: sync.Pool{
 			New: func() any {
 				return &net.UDPAddr{
@@ -72,6 +75,37 @@ func NewStdNetBind() Bind {
 			},
 		},
 	}
+	if control == nil {
+		s.lc = &net.ListenConfig{}
+		return s
+	}
+
+	s.lc = &net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			var opErr error
+
+			err := c.Control(func(fd uintptr) {
+				if e := setSocketOptions(fd); e != nil {
+					opErr = e
+					return
+				}
+			})
+			if err != nil {
+				return err
+			}
+			if opErr != nil {
+				return opErr
+			}
+
+			return control(network, address, c)
+		},
+	}
+
+	return s
+}
+
+func NewStdNetBind() Bind {
+	return NewStdNetBindWithControl(nil)
 }
 
 type StdNetEndpoint struct {
@@ -121,7 +155,11 @@ func (e *StdNetEndpoint) DstToString() string {
 }
 
 func (s *StdNetBind) listenNet(network string, port int) (*net.UDPConn, int, error) {
-	conn, err := s.listenConfig().ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
+	conn, err := s.lc.ListenPacket(
+		context.Background(),
+		network,
+		":"+strconv.Itoa(port),
+	)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -326,10 +364,6 @@ func (s *StdNetBind) Close() error {
 	return err2
 }
 
-func (s *StdNetBind) SetControl(f func(network, address string, c syscall.RawConn) error) {
-	s.control = f
-}
-
 type ErrUDPGSODisabled struct {
 	onLaddr  string
 	RetryErr error
@@ -412,31 +446,6 @@ retry:
 		return ErrUDPGSODisabled{onLaddr: conn.LocalAddr().String(), RetryErr: err}
 	}
 	return err
-}
-
-func (s *StdNetBind) listenConfig() *net.ListenConfig {
-	return &net.ListenConfig{
-		Control: func(network, address string, c syscall.RawConn) error {
-			var opErr error
-			err := c.Control(func(fd uintptr) {
-				if e := setSocketOptions(fd); e != nil {
-					opErr = e
-					return
-				}
-			})
-			if err != nil {
-				return err
-			}
-			if opErr != nil {
-				return opErr
-			}
-
-			if s.control != nil {
-				return s.control(network, address, c)
-			}
-			return nil
-		},
-	}
 }
 
 func (s *StdNetBind) send(conn *net.UDPConn, pc batchWriter, msgs []ipv6.Message) error {

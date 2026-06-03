@@ -75,10 +75,6 @@ func NewStdNetBindWithControl(
 			},
 		},
 	}
-	if control == nil {
-		s.lc = &net.ListenConfig{}
-		return s
-	}
 
 	s.lc = &net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
@@ -97,7 +93,11 @@ func NewStdNetBindWithControl(
 				return opErr
 			}
 
-			return control(network, address, c)
+			if control != nil {
+				return control(network, address, c)
+			}
+
+			return nil
 		},
 	}
 

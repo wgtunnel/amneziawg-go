@@ -20,7 +20,7 @@ type DialerOptions struct {
 	Dns      []netip.Addr
 }
 
-func NewStreamDialer(opts DialerOptions) (*StreamDialer, error) {
+func NewStreamDialer(opts DialerOptions, statusCB func(device.StatusCode)) (*StreamDialer, error) {
 	var localAddresses []netip.Addr
 	for _, prefix := range opts.Prefixes {
 		localAddresses = append(localAddresses, prefix.Addr())
@@ -38,7 +38,7 @@ func NewStreamDialer(opts DialerOptions) (*StreamDialer, error) {
 		},
 	}
 
-	dev := device.NewDevice(tun, conn.NewDefaultBind(), &awgLogger)
+	dev := device.NewDevice(tun, conn.NewDefaultBind(), &awgLogger, statusCB)
 	if err := dev.IpcSet(opts.Ipc); err != nil {
 		return nil, fmt.Errorf("failed to configure device: %v", err)
 	}

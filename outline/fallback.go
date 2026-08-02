@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/amnezia-vpn/amneziawg-go/v3/device"
 	"github.com/goccy/go-yaml"
 	"golang.getoutline.org/sdk/transport"
 	"golang.getoutline.org/sdk/x/mobileproxy"
@@ -211,6 +212,8 @@ func FallbackParser(ctx context.Context, y smart.YAMLNode) (transport.StreamDial
 		Prefixes: prefixes,
 		Mtu:      cfg.Mtu,
 		Dns:      dns,
+	}, func(code device.StatusCode) {
+		//Optional status codes for handshakes
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create dialer: %v", err)

@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath" // Ensure this is imported
 
-	"github.com/amnezia-vpn/amneziawg-go/rwcancel"
+	"github.com/amnezia-vpn/amneziawg-go/v3/rwcancel"
 	"golang.org/x/sys/unix"
 )
 

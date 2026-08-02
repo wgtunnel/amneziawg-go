@@ -3,8 +3,8 @@ package outline_test
 import (
 	"testing"
 
-	"github.com/Jigsaw-Code/outline-sdk/x/mobileproxy"
-	awg "github.com/amnezia-vpn/amneziawg-go/outline"
+	awg "github.com/amnezia-vpn/amneziawg-go/v3/outline"
+	"golang.getoutline.org/sdk/x/mobileproxy"
 )
 
 const cfg = `

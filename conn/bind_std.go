@@ -76,20 +76,14 @@ func NewStdNetBindWithControl(
 		},
 	}
 
+	// Same socket setup as upstream's listenConfig(), plus the caller's control (e.g. to protect
+	// or bypass the socket) once those options are applied, before bind.
 	s.lc = &net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
-			var opErr error
-			err := c.Control(func(fd uintptr) {
-				if e := setSocketOptions(fd); e != nil {
-					opErr = e
-					return
+			for _, fn := range controlFns {
+				if err := fn(network, address, c); err != nil {
+					return err
 				}
-			})
-			if err != nil {
-				return err
-			}
-			if opErr != nil {
-				return opErr
 			}
 			if control != nil {
 				return control(network, address, c)

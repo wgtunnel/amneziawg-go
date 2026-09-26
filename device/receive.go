@@ -527,6 +527,8 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 				continue
 			}
 			dataPacketReceived = true
+			// An authenticated data packet proves the path works, don't wait for a keepalive
+			device.statusCB(StatusHealthy)
 
 			switch elem.packet[0] >> 4 {
 			case 4:

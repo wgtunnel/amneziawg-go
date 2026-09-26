@@ -707,8 +707,9 @@ func (peer *Peer) RoutineSequentialSender(maxBatchSize int) {
 			}
 		}
 		if err != nil {
+			// Not reported as a handshake failure, a transient socket error isn't one and the
+			// handshake timers report it if the path is really down
 			device.log.Errorf("%v - Failed to send data packets: %v", peer, err)
-			device.statusCB(StatusHandshakeFailure)
 			continue
 		}
 

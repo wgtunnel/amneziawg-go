@@ -290,6 +290,46 @@ func TestCacheExpiresAfterIdle(t *testing.T) {
 	}
 }
 
+func cacheKey(i int, proto uint8) flowKey {
+	k := flowKey{proto: proto, ipLen: 4, srcPort: uint16(i), dstPort: uint16(i >> 16)}
+	copy(k.srcIP[:], net.IPv4(10, 0, 0, 2).To4())
+	copy(k.dstIP[:], net.IPv4(1, 1, 1, 1).To4())
+	return k
+}
+
+// A flood of denied flows, which any app bound to tun0 can produce, must not
+// push the verdict of an allowed flow out of a full cache.
+func TestCacheFloodKeepsAllowed(t *testing.T) {
+	c := decisionCache{m: make(map[flowKey]cacheEntry)}
+	allowed := cacheKey(1, ipProtoUDP)
+	c.put(allowed, true, 0)
+	for i := 2; i < 3*cacheMaxEntries; i++ {
+		c.put(cacheKey(i, ipProtoUDP), false, 0)
+	}
+	if allow, found := c.get(allowed, 0); !found || !allow {
+		t.Fatalf("allowed verdict lost after a flood of denied ones: found=%v allow=%v", found, allow)
+	}
+	if len(c.m) > cacheMaxEntries {
+		t.Errorf("cache grew to %d entries, limit %d", len(c.m), cacheMaxEntries)
+	}
+}
+
+// A cache full of live allowed verdicts frees an eighth of itself, not all of it.
+func TestCacheFullOfAllowedEvictsPart(t *testing.T) {
+	c := decisionCache{m: make(map[flowKey]cacheEntry)}
+	for i := 0; i < cacheMaxEntries; i++ {
+		c.put(cacheKey(i, ipProtoUDP), true, 0)
+	}
+	fresh := cacheKey(cacheMaxEntries, ipProtoUDP)
+	c.put(fresh, true, 0)
+	if _, found := c.get(fresh, 0); !found {
+		t.Fatal("the new verdict was not stored")
+	}
+	if n, want := len(c.m), cacheMaxEntries-cacheMaxEntries/8+1; n != want {
+		t.Errorf("expected %d entries after eviction, got %d", want, n)
+	}
+}
+
 // The coarse clock advances by itself, without any lookups.
 func TestClockAdvancesWhileIdle(t *testing.T) {
 	install(t, &countingFilter{denySrcPort: -1})

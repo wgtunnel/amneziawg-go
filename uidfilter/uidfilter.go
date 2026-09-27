@@ -500,15 +500,26 @@ func (c *decisionCache) get(k flowKey, now int64) (allow, found bool) {
 }
 
 func (c *decisionCache) put(k flowKey, allow bool, now int64) {
-	if len(c.m) >= cacheMaxEntries {
-		for kk, ee := range c.m {
-			if ee.expiresAt <= now {
-				delete(c.m, kk)
-			}
-		}
-		if len(c.m) >= cacheMaxEntries {
-			c.m = make(map[flowKey]cacheEntry)
-		}
+	if _, ok := c.m[k]; !ok && len(c.m) >= cacheMaxEntries {
+		c.evict(now)
 	}
 	c.m[k] = cacheEntry{allow: allow, expiresAt: now + cacheTTL.Nanoseconds()}
+}
+
+// evict makes room in a full cache. Any app that binds to the tun device can
+// fill it with denied verdicts, so it never drops the whole map: expired and
+// denied entries go first, and allowed ones only while they alone fill more
+// than seven eighths of it. Those are judged again on their next packet.
+func (c *decisionCache) evict(now int64) {
+	for k, e := range c.m {
+		if e.expiresAt <= now || !e.allow {
+			delete(c.m, k)
+		}
+	}
+	for k := range c.m {
+		if len(c.m) <= cacheMaxEntries-cacheMaxEntries/8 {
+			break
+		}
+		delete(c.m, k)
+	}
 }

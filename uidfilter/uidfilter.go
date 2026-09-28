@@ -38,7 +38,6 @@ package uidfilter
 
 import (
 	"net"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -247,9 +246,7 @@ func tcpFlags(p []byte) (flags byte, ok bool) {
 // --- flows waiting for a verdict ---
 
 const (
-	// workers is how many filter calls may run at once. Each runs on its own
-	// locked OS thread, so a filter that attaches the thread to a runtime (JNI
-	// does) attaches this many threads and no more.
+	// workers is how many filter calls may run at once.
 	workers = 4
 
 	// maxPendingFlows bounds the flows of one Gate waiting for a verdict. Past
@@ -395,8 +392,14 @@ func (s *flowState) collectDecided(now int64) {
 
 // work asks the filter about pending flows, one at a time, until Set replaces
 // the holder.
+//
+// A worker is not locked to its OS thread. A locked goroutine that exits takes
+// its thread with it, and the thread's exit handlers run with every signal
+// blocked (runtime.mexit). A filter that attached the thread to a runtime, as
+// JNI does, is detached in one of those handlers, and a runtime that meets a
+// fault it would normally handle there kills the process. Unlocked, the thread
+// goes back to the scheduler when the worker exits and stays attached.
 func (h *holder) work() {
-	runtime.LockOSThread() // never unlocked: the thread exits with the goroutine
 	for {
 		select {
 		case <-h.done:

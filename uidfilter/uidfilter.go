@@ -26,8 +26,9 @@
 // late, and is then dropped like one of an unknown owner.
 //
 // While a filter is installed, packets whose owner cannot be resolved are
-// dropped: anything but TCP and UDP, IP fragments, and IPv6 packets with
-// extension headers. An unprivileged app can send ICMP echo through a ping
+// dropped: anything but TCP and UDP, IPv4 fragments whose first fragment was
+// not seen, and IPv6 packets with extension headers, IPv6 fragments included.
+// The later fragments of a datagram follow the verdict on its first one. An unprivileged app can send ICMP echo through a ping
 // socket bound to the tun device, and the platform resolves owners for TCP and
 // UDP only, so passing such packets would reopen the bypass.
 //
@@ -139,7 +140,7 @@ func (g *Gate) AllowOutboundPacket(packet []byte, r Releaser) bool {
 
 	proto, src, srcPort, dst, dstPort, ok := parse5Tuple(packet)
 	if !ok {
-		return false
+		return g.s.fragment(h, packet, r)
 	}
 	synAck := false
 	if proto == ipProtoTCP {
@@ -163,16 +164,21 @@ func (g *Gate) AllowOutboundPacket(packet []byte, r Releaser) bool {
 		key.dstPort = 0
 	}
 
-	now := h.now.Load()
-	if proto == ipProtoUDP {
-		if allow, due, found := g.s.cache.get(key, now); found {
+	return g.s.decide(h, key, packet, r, h.now.Load())
+}
+
+// decide returns the verdict for a packet of the flow key: from the cache for
+// UDP, else by holding the packet while the flow is judged.
+func (s *flowState) decide(h *holder, key flowKey, packet []byte, r Releaser, now int64) bool {
+	if key.proto == ipProtoUDP {
+		if allow, due, found := s.cache.get(key, now); found {
 			if allow && due {
-				return g.s.refresh(h, key, r, now)
+				return s.refresh(h, key, r, now)
 			}
 			return allow
 		}
 	}
-	return g.s.hold(h, key, packet, r, now)
+	return s.hold(h, key, packet, r, now)
 }
 
 const (
@@ -304,6 +310,8 @@ type flowState struct {
 	waiting   int       // pending flows without a verdict yet
 	heldBytes int       // bytes of the packets held
 	decided   []flowKey // pending flows with a verdict, not yet collected
+
+	frags map[fragKey]fragEntry // fragmented datagrams followed; the reader's own
 }
 
 type pendingFlow struct {
@@ -344,6 +352,7 @@ func newFlowState() *flowState {
 	return &flowState{
 		cache:   decisionCache{m: make(map[flowKey]cacheEntry)},
 		pending: make(map[flowKey]*pendingFlow),
+		frags:   make(map[fragKey]fragEntry),
 	}
 }
 
@@ -520,6 +529,94 @@ func (s *flowState) refresh(h *holder, key flowKey, r Releaser, now int64) bool 
 	s.pending[key] = &pendingFlow{r: r}
 	s.waiting++
 	return true
+}
+
+// --- IPv4 fragments ---
+
+// maxFragIDs bounds the fragmented datagrams one Gate follows at once.
+const maxFragIDs = 1024
+
+type fragKey struct {
+	src, dst [4]byte
+	id       uint16
+	proto    uint8
+}
+
+type fragEntry struct {
+	key  flowKey
+	pass bool  // the first fragment needed no verdict: TCP without SYN
+	at   int64 // the coarse clock when the first fragment was read
+}
+
+// fragment handles a packet parse5Tuple rejected, and returns false unless it
+// is an IPv4 fragment of a TCP or UDP flow that may pass. Only the first
+// fragment carries the ports: it is judged like any packet of its flow. The
+// later ones, matched to it by source, destination, protocol and
+// identification, follow its flow for maxHoldTime; a later fragment whose
+// first one was not seen is dropped. An app cannot choose the identification,
+// and fragments without their first one cannot be reassembled, so a denied
+// app gains nothing. IPv6 fragments are not followed.
+func (s *flowState) fragment(h *holder, p []byte, r Releaser) bool {
+	if len(p) < 20 || p[0]>>4 != 4 || !isTCPOrUDP(p[9]) {
+		return false
+	}
+	frag := int(p[6])<<8 | int(p[7])
+	if frag&(ipv4FlagMF|ipv4MaskFragOffset) == 0 {
+		return false // not a fragment, so too short to parse
+	}
+	var fk fragKey
+	copy(fk.src[:], p[ipv4OffsetSrc:ipv4OffsetSrc+net.IPv4len])
+	copy(fk.dst[:], p[ipv4OffsetDst:ipv4OffsetDst+net.IPv4len])
+	fk.id = uint16(p[4])<<8 | uint16(p[5])
+	fk.proto = p[9]
+	now := h.now.Load()
+
+	if frag&ipv4MaskFragOffset != 0 {
+		e, ok := s.frags[fk]
+		if !ok || now-e.at > maxHoldTime.Nanoseconds() {
+			return false
+		}
+		if e.pass {
+			return true
+		}
+		return s.decide(h, e.key, p, r, now)
+	}
+
+	ihl := int(p[0]&0x0f) * 4
+	if ihl < 20 || len(p) < ihl+4 {
+		return false
+	}
+	key := flowKey{proto: p[9], ipLen: net.IPv4len,
+		srcPort: uint16(p[ihl])<<8 | uint16(p[ihl+1]), dstPort: uint16(p[ihl+2])<<8 | uint16(p[ihl+3])}
+	copy(key.srcIP[:], fk.src[:])
+	copy(key.dstIP[:], fk.dst[:])
+	pass := p[9] == ipProtoTCP && len(p) > ihl+tcpOffsetFlags && p[ihl+tcpOffsetFlags]&tcpFlagSYN == 0
+	if _, ok := s.frags[fk]; !ok && len(s.frags) >= maxFragIDs {
+		s.evictFrags(now)
+	}
+	s.frags[fk] = fragEntry{key: key, pass: pass, at: now}
+	if pass {
+		return true
+	}
+	return s.decide(h, key, p, r, now)
+}
+
+// evictFrags makes room in a full table of fragmented datagrams: those first
+// seen more than maxHoldTime ago go first, then any, down to seven eighths of
+// maxFragIDs. Any app can fill the table with datagrams of its own, so it is
+// never dropped whole; an evicted datagram loses its later fragments.
+func (s *flowState) evictFrags(now int64) {
+	for k, e := range s.frags {
+		if now-e.at > maxHoldTime.Nanoseconds() {
+			delete(s.frags, k)
+		}
+	}
+	for k := range s.frags {
+		if len(s.frags) <= maxFragIDs-maxFragIDs/8 {
+			break
+		}
+		delete(s.frags, k)
+	}
 }
 
 // --- per-flow decision cache ---

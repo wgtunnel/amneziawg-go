@@ -205,6 +205,70 @@ func TestIPv6FlowJudged(t *testing.T) {
 	}
 }
 
+// fragments splits a UDP datagram from srcPort into a first fragment, which
+// carries the UDP header, and a later one, with the given identification.
+func fragments(srcPort int, id uint16) (first, later []byte) {
+	first = append(ipv4Packet(ipProtoUDP, net.IPv4(10, 0, 0, 2), net.IPv4(1, 1, 1, 1), srcPort, 53), make([]byte, 20)...)
+	first[4], first[5] = byte(id>>8), byte(id)
+	first[6] = 0x20 // more fragments
+	later = ipv4Packet(ipProtoUDP, net.IPv4(10, 0, 0, 2), net.IPv4(1, 1, 1, 1), 0, 0)
+	later[4], later[5] = byte(id>>8), byte(id)
+	later[7] = 3 // offset 24
+	return
+}
+
+// The first fragment of a datagram is judged by its ports and the later ones
+// follow it, in order. A later fragment whose first one was not seen is
+// dropped, and so are the fragments of a denied flow.
+func TestFragmentsFollowTheirFlow(t *testing.T) {
+	f := &countingFilter{denySrcPort: 6666}
+	rd := install(t, f)
+	first, later := fragments(5555, 0x1234)
+	if rd.check(first) || rd.check(later) {
+		t.Fatal("a fragment passed before its flow was judged")
+	}
+	rd.settle(t)
+	got := rd.r.released()
+	if len(got) != 2 || !bytes.Equal(got[0], first) || !bytes.Equal(got[1], later) {
+		t.Fatalf("expected both fragments released in order, got %d packets", len(got))
+	}
+	first2, later2 := fragments(5555, 0x1235)
+	if !rd.check(first2) || !rd.check(later2) {
+		t.Error("fragments of an allowed, cached flow were held")
+	}
+	_, orphan := fragments(5555, 0x9999)
+	if rd.check(orphan) {
+		t.Error("a fragment whose first fragment was never seen passed")
+	}
+	first3, later3 := fragments(6666, 0x2000)
+	rd.check(first3)
+	rd.check(later3)
+	rd.settle(t)
+	if rd.check(later3) {
+		t.Error("a fragment of a denied flow passed")
+	}
+	if n := len(rd.r.released()); n != 2 {
+		t.Errorf("fragments of a denied flow were released: %d packets in all", n)
+	}
+	if n := f.calls.Load(); n != 2 {
+		t.Errorf("expected one lookup per flow, got %d", n)
+	}
+}
+
+// The table of fragmented datagrams stays bounded when an app fills it, and a
+// datagram still being reassembled survives only if it is young.
+func TestFragmentTableBounded(t *testing.T) {
+	rd := install(t, &countingFilter{denySrcPort: -1})
+	for i := 0; i < 3*maxFragIDs; i++ {
+		first, _ := fragments(5555, uint16(i))
+		rd.check(first)
+	}
+	rd.settle(t)
+	if n := len(rd.g.s.frags); n > maxFragIDs {
+		t.Errorf("fragment table grew to %d, limit %d", n, maxFragIDs)
+	}
+}
+
 func TestUnresolvablePacketsDroppedWhileFiltering(t *testing.T) {
 	rd := install(t, &countingFilter{denySrcPort: -1})
 	// ICMP echo can be sent from an unprivileged ping socket bound to tun0.
@@ -212,10 +276,10 @@ func TestUnresolvablePacketsDroppedWhileFiltering(t *testing.T) {
 	if rd.check(icmp) {
 		t.Error("ICMP must be dropped while a filter is installed")
 	}
-	frag := ipv4Packet(ipProtoUDP, net.IPv4(10, 0, 0, 2), net.IPv4(1, 1, 1, 1), 5555, 443)
-	frag[6] = 0x20 // more fragments
+	frag := ipv4Packet(ipProtoUDP, net.IPv4(10, 0, 0, 2), net.IPv4(1, 1, 1, 1), 0, 0)
+	frag[7] = 3 // a later fragment, offset 24, whose first one was never seen
 	if rd.check(frag) {
-		t.Error("IPv4 fragments must be dropped while a filter is installed")
+		t.Error("an IPv4 fragment without its first one must be dropped while a filter is installed")
 	}
 	rd.settle(t)
 	if n := len(rd.r.released()); n != 0 {

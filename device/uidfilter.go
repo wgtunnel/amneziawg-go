@@ -17,9 +17,17 @@ import (
 // RoutineReadFromTUN does for a packet it has just read, one packet at a time,
 // and is called from a uidfilter worker goroutine.
 func (device *Device) ReleaseOutboundPacket(packet []byte) {
+	// Hold the encryption queue open while sending, as the tun reader does:
+	// Close closes it once every writer it knows of has let go, and this
+	// goroutine is not one of them.
+	device.state.Lock()
 	if device.isClosed() {
+		device.state.Unlock()
 		return
 	}
+	device.queue.encryption.wg.Add(1)
+	device.state.Unlock()
+	defer device.queue.encryption.wg.Done()
 
 	var peer *Peer
 	switch packet[0] >> 4 {

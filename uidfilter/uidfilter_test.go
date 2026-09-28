@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -419,6 +420,48 @@ func TestVerdictAgedFromLookup(t *testing.T) {
 	advanceClock(cacheTTL - refreshAfter + time.Second)
 	if rd.check(p) {
 		t.Error("a verdict passed a packet cacheTTL after its lookup")
+	}
+}
+
+// askedFilter allows everything and records the last question.
+type askedFilter struct {
+	mu   sync.Mutex
+	last string
+}
+
+func (f *askedFilter) Allow(network, srcIP string, srcPort int, dstIP string, dstPort int) bool {
+	f.mu.Lock()
+	f.last = network + " " + net.JoinHostPort(srcIP, strconv.Itoa(srcPort)) + " -> " + net.JoinHostPort(dstIP, strconv.Itoa(dstPort))
+	f.mu.Unlock()
+	return true
+}
+
+func (f *askedFilter) question() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.last
+}
+
+// A SYN-ACK, which answers a connection coming in through the tunnel, is
+// judged by who listens on its source; a SYN, by its own 5-tuple.
+func TestSynAckAsksAboutListener(t *testing.T) {
+	f := &askedFilter{}
+	rd := install(t, f)
+	synAck := tcpPacket(8080, tcpFlagSYN|tcpFlagACK)
+	if rd.check(synAck) {
+		t.Fatal("a SYN-ACK passed without a verdict")
+	}
+	rd.settle(t)
+	if got := f.question(); got != "tcp 10.0.0.2:8080 -> 0.0.0.0:0" {
+		t.Errorf("unexpected question for a SYN-ACK: %s", got)
+	}
+	if n := len(rd.r.released()); n != 1 {
+		t.Errorf("expected the SYN-ACK to be released, got %d", n)
+	}
+	rd.check(tcpPacket(5555, tcpFlagSYN))
+	rd.settle(t)
+	if got := f.question(); got != "tcp 10.0.0.2:5555 -> 1.1.1.1:443" {
+		t.Errorf("unexpected question for a SYN: %s", got)
 	}
 }
 

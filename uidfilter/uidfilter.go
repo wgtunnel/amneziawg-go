@@ -141,15 +141,27 @@ func (g *Gate) AllowOutboundPacket(packet []byte, r Releaser) bool {
 	if !ok {
 		return false
 	}
+	synAck := false
 	if proto == ipProtoTCP {
-		if flags, ok := tcpFlags(packet); ok && flags&tcpFlagSYN == 0 {
+		flags, ok := tcpFlags(packet)
+		if ok && flags&tcpFlagSYN == 0 {
 			return true
 		}
+		synAck = ok && flags&tcpFlagACK != 0
 	}
 
 	key := flowKey{proto: proto, ipLen: uint8(len(src)), srcPort: uint16(srcPort), dstPort: uint16(dstPort)}
 	copy(key.srcIP[:], src)
-	copy(key.dstIP[:], dst)
+	if !synAck {
+		copy(key.dstIP[:], dst)
+	} else {
+		// A SYN-ACK answers a connection that came in through the tunnel. Its
+		// 5-tuple belongs to a request socket, which the kernel reports as
+		// owned by uid 0, so ask about the socket listening on the source
+		// instead: the same local address with no remote, owned by the app
+		// that gets the connection.
+		key.dstPort = 0
+	}
 
 	now := h.now.Load()
 	if proto == ipProtoUDP {
@@ -169,6 +181,7 @@ const (
 
 	tcpOffsetFlags = 13
 	tcpFlagSYN     = 0x02
+	tcpFlagACK     = 0x10
 
 	ipv4FlagMF         = 0x2000
 	ipv4MaskFragOffset = 0x1fff

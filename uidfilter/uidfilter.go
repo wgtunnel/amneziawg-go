@@ -126,7 +126,8 @@ type Gate struct {
 // Judging those again would misread closing sockets, which the kernel
 // re-attributes to UID 0 once the app has closed them. Every SYN is judged,
 // even on a 5-tuple judged before, since a new socket may have taken it over.
-// UDP verdicts are cached per 5-tuple for cacheTTL.
+// UDP verdicts are cached per 5-tuple for cacheTTL, and an allowed flow still
+// sending after refreshAfter is judged again in the background.
 func (g *Gate) AllowOutboundPacket(packet []byte, r Releaser) bool {
 	h := current.Load()
 	if h == nil {
@@ -152,7 +153,10 @@ func (g *Gate) AllowOutboundPacket(packet []byte, r Releaser) bool {
 
 	now := h.now.Load()
 	if proto == ipProtoUDP {
-		if allow, found := g.s.cache.get(key, now); found {
+		if allow, due, found := g.s.cache.get(key, now); found {
+			if allow && due {
+				return g.s.refresh(h, key, r, now)
+			}
 			return allow
 		}
 	}
@@ -462,11 +466,46 @@ func (h *holder) send(r Releaser, held []heldPacket) bool {
 	return true
 }
 
+// refresh passes a packet of a UDP flow whose allowed verdict is still valid
+// but older than refreshAfter, and has the flow judged again unless it already
+// is; the new verdict replaces the old one when the reader next sees the flow.
+// Nothing is held, so an active flow loses nothing when its verdict would have
+// expired, and nothing passes on a verdict older than cacheTTL.
+func (s *flowState) refresh(h *holder, key flowKey, r Releaser, now int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if pf, ok := s.pending[key]; ok {
+		if !pf.decided {
+			return true
+		}
+		delete(s.pending, key)
+		s.cache.put(key, pf.allow, now)
+		return pf.allow
+	}
+	if s.waiting >= maxPendingFlows {
+		return true // judged again on a later packet
+	}
+	select {
+	case h.jobs <- job{s, key}:
+	default:
+		return true
+	}
+	s.pending[key] = &pendingFlow{r: r}
+	s.waiting++
+	return true
+}
+
 // --- per-flow decision cache ---
 
 const (
 	cacheTTL        = 10 * time.Second
 	cacheMaxEntries = 4096
+
+	// refreshAfter is how old an allowed UDP verdict may get before the flow,
+	// if it is still sending, is judged again. It bounds how long a socket that
+	// took over the 5-tuple of an allowed flow keeps its verdict, and it costs
+	// one lookup per active flow per refreshAfter.
+	refreshAfter = 2 * time.Second
 )
 
 // flowKey is the full 5-tuple. A key without the destination would outlive the
@@ -492,16 +531,18 @@ type decisionCache struct {
 	m map[flowKey]cacheEntry
 }
 
-func (c *decisionCache) get(k flowKey, now int64) (allow, found bool) {
+// get returns the cached verdict for k, and whether it is older than
+// refreshAfter.
+func (c *decisionCache) get(k flowKey, now int64) (allow, due, found bool) {
 	e, ok := c.m[k]
 	if !ok {
-		return false, false
+		return false, false, false
 	}
 	if e.expiresAt > now {
-		return e.allow, true
+		return e.allow, now >= e.expiresAt-cacheTTL.Nanoseconds()+refreshAfter.Nanoseconds(), true
 	}
 	delete(c.m, k)
-	return false, false
+	return false, false, false
 }
 
 func (c *decisionCache) put(k flowKey, allow bool, now int64) {

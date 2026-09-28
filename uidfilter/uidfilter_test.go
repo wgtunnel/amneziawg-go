@@ -290,6 +290,67 @@ func TestCacheExpiresAfterIdle(t *testing.T) {
 	}
 }
 
+// An allowed UDP flow that keeps sending is judged again once its verdict is
+// refreshAfter old, while the verdict still holds: a burst sent meanwhile
+// passes whole, the filter is asked once, and the flow never meets the expiry
+// that would hold its packets.
+func TestRefreshKeepsActiveFlow(t *testing.T) {
+	f := &countingFilter{denySrcPort: -1}
+	rd := install(t, f)
+	p := udpPacket(5555, net.IPv4(1, 1, 1, 1), 0)
+	if !rd.verdict(t, p) {
+		t.Fatal("expected allow")
+	}
+	advanceClock(refreshAfter - clockInterval)
+	rd.check(p)
+	rd.settle(t)
+	if n := f.calls.Load(); n != 1 {
+		t.Fatalf("a verdict younger than refreshAfter was judged again: %d lookups", n)
+	}
+	f.gate = make(chan struct{})
+	advanceClock(clockInterval)
+	for i := 0; i < 20; i++ {
+		if !rd.check(udpPacket(5555, net.IPv4(1, 1, 1, 1), byte(i))) {
+			t.Fatalf("packet %d of an allowed flow was held or dropped while it was judged again", i)
+		}
+	}
+	close(f.gate)
+	rd.settle(t)
+	if n := f.calls.Load(); n != 2 {
+		t.Errorf("expected one lookup to judge the flow again, got %d in all", n)
+	}
+	for elapsed := refreshAfter; elapsed < 3*cacheTTL; elapsed += refreshAfter {
+		advanceClock(refreshAfter)
+		if !rd.check(p) {
+			t.Fatalf("an active allowed flow was held %v after its first lookup", elapsed+refreshAfter)
+		}
+		rd.settle(t)
+	}
+	if n := len(rd.r.released()); n != 1 {
+		t.Errorf("expected only the first packet to have been held, %d released", n)
+	}
+}
+
+// A socket that takes over the 5-tuple of an allowed flow is denied about
+// refreshAfter after the lookup it inherits, not cacheTTL.
+func TestRefreshCatchesTakeover(t *testing.T) {
+	f := &countingFilter{denySrcPort: -1}
+	rd := install(t, f)
+	p := udpPacket(5555, net.IPv4(1, 1, 1, 1), 0)
+	if !rd.verdict(t, p) {
+		t.Fatal("expected allow")
+	}
+	f.denySrcPort = 5555 // the allowed socket closed, another one took the 5-tuple
+	advanceClock(refreshAfter)
+	if !rd.check(p) {
+		t.Fatal("expected the valid verdict to pass the packet that starts the lookup")
+	}
+	rd.settle(t)
+	if rd.check(p) {
+		t.Error("a packet passed after the flow was judged again and denied")
+	}
+}
+
 func cacheKey(i int, proto uint8) flowKey {
 	k := flowKey{proto: proto, ipLen: 4, srcPort: uint16(i), dstPort: uint16(i >> 16)}
 	copy(k.srcIP[:], net.IPv4(10, 0, 0, 2).To4())
@@ -306,7 +367,7 @@ func TestCacheFloodKeepsAllowed(t *testing.T) {
 	for i := 2; i < 3*cacheMaxEntries; i++ {
 		c.put(cacheKey(i, ipProtoUDP), false, 0)
 	}
-	if allow, found := c.get(allowed, 0); !found || !allow {
+	if allow, _, found := c.get(allowed, 0); !found || !allow {
 		t.Fatalf("allowed verdict lost after a flood of denied ones: found=%v allow=%v", found, allow)
 	}
 	if len(c.m) > cacheMaxEntries {
@@ -322,7 +383,7 @@ func TestCacheFullOfAllowedEvictsPart(t *testing.T) {
 	}
 	fresh := cacheKey(cacheMaxEntries, ipProtoUDP)
 	c.put(fresh, true, 0)
-	if _, found := c.get(fresh, 0); !found {
+	if _, _, found := c.get(fresh, 0); !found {
 		t.Fatal("the new verdict was not stored")
 	}
 	if n, want := len(c.m), cacheMaxEntries-cacheMaxEntries/8+1; n != want {

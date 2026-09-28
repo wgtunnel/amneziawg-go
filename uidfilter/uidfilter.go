@@ -255,9 +255,11 @@ const (
 	// unaffected.
 	maxPendingFlows = 256
 
-	// maxHeldPerFlow is how many packets of one flow are held until its verdict:
-	// enough for a SYN and its retransmit, or a DNS query and its retry.
-	maxHeldPerFlow = 4
+	// maxHeldPerFlow is how many packets of one flow are held until its verdict.
+	// A sender may put a burst on a new flow before its first answer, and every
+	// packet past the cap is dropped although the flow is allowed a few
+	// milliseconds later; maxHeldBytes still bounds the memory.
+	maxHeldPerFlow = 16
 
 	// maxHeldBytes bounds the memory held by one Gate.
 	maxHeldBytes = 1 << 20

@@ -351,6 +351,77 @@ func TestRefreshCatchesTakeover(t *testing.T) {
 	}
 }
 
+// A verdict reached while nothing else happened on the reader is not used once
+// it is refreshAfter old: a socket that took over the 5-tuple meanwhile is
+// judged itself. Both a flow's first verdict and a refreshed one.
+func TestStaleUncollectedVerdictNotUsed(t *testing.T) {
+	for _, refreshed := range []bool{false, true} {
+		f := &countingFilter{denySrcPort: -1}
+		rd := install(t, f)
+		p := udpPacket(5555, net.IPv4(1, 1, 1, 1), 0)
+		rd.check(p) // held: the flow's first lookup
+		if refreshed {
+			rd.settle(t)
+			rd.check(p) // collects the verdict
+			advanceClock(refreshAfter)
+			if !rd.check(p) { // starts the refresh
+				t.Fatal("expected the valid verdict to pass")
+			}
+		}
+		rd.settle(t)         // allowed; nothing on this reader collects it
+		f.denySrcPort = 5555 // another socket took the 5-tuple
+		advanceClock(time.Minute)
+		if rd.check(p) {
+			t.Errorf("refreshed=%v: a takeover passed on a verdict reached a minute ago", refreshed)
+		}
+		rd.settle(t)
+		if rd.check(p) {
+			t.Errorf("refreshed=%v: a takeover passed after it was judged", refreshed)
+		}
+	}
+}
+
+// A refreshed verdict collected late counts from its lookup: the flow is
+// judged again on the packet that collects it, and a socket that took over
+// meanwhile is denied as soon as that lookup answers.
+func TestLateRefreshJudgedAgain(t *testing.T) {
+	f := &countingFilter{denySrcPort: -1}
+	rd := install(t, f)
+	p := udpPacket(5555, net.IPv4(1, 1, 1, 1), 0)
+	rd.verdict(t, p)
+	advanceClock(refreshAfter)
+	rd.check(p) // starts the refresh
+	rd.settle(t)
+	f.denySrcPort = 5555
+	advanceClock(refreshAfter + time.Second) // the refreshed verdict is 3 s old
+	if !rd.check(p) {
+		t.Fatal("expected the valid verdict to pass the packet that collects the refresh")
+	}
+	rd.settle(t)
+	if n := f.calls.Load(); n != 3 {
+		t.Errorf("expected the late refresh to start another lookup, %d lookups", n)
+	}
+	if rd.check(p) {
+		t.Error("a takeover passed after it was judged")
+	}
+}
+
+// A verdict collected late is aged from when it was reached.
+func TestVerdictAgedFromLookup(t *testing.T) {
+	f := &countingFilter{denySrcPort: -1}
+	rd := install(t, f)
+	p := udpPacket(5555, net.IPv4(1, 1, 1, 1), 0)
+	rd.check(p)
+	rd.settle(t)
+	advanceClock(refreshAfter - time.Second)
+	rd.check(udpPacket(6666, net.IPv4(1, 1, 1, 1), 0)) // a new flow collects the verdict
+	rd.settle(t)
+	advanceClock(cacheTTL - refreshAfter + time.Second)
+	if rd.check(p) {
+		t.Error("a verdict passed a packet cacheTTL after its lookup")
+	}
+}
+
 func cacheKey(i int, proto uint8) flowKey {
 	k := flowKey{proto: proto, ipLen: 4, srcPort: uint16(i), dstPort: uint16(i >> 16)}
 	copy(k.srcIP[:], net.IPv4(10, 0, 0, 2).To4())

@@ -298,6 +298,14 @@ type pendingFlow struct {
 	r       Releaser
 	decided bool
 	allow   bool
+	at      int64 // the coarse clock when the verdict was reached
+}
+
+// stale reports whether a verdict was reached more than refreshAfter ago. It
+// reaches the cache only when the tun reader collects it, which on a quiet
+// tunnel may be much later; by then the socket it was asked about may be gone.
+func (pf *pendingFlow) stale(now int64) bool {
+	return now-pf.at >= refreshAfter.Nanoseconds()
 }
 
 type heldPacket struct {
@@ -360,11 +368,12 @@ func (s *flowState) hold(h *holder, key flowKey, packet []byte, r Releaser, now 
 			return false
 		}
 		delete(s.pending, key)
-		if key.proto != ipProtoTCP {
-			s.cache.put(key, pf.allow, now)
+		if key.proto != ipProtoTCP && !pf.stale(now) {
+			s.cache.put(key, pf.allow, pf.at)
 			return pf.allow
 		}
 		// A SYN is judged afresh: this may be a new connection on the same 5-tuple.
+		// So is a flow whose verdict waited too long to be collected.
 	}
 	if s.waiting >= maxPendingFlows || s.heldBytes+len(packet) > maxHeldBytes {
 		return false // not cached: the flow is judged once there is room
@@ -382,14 +391,15 @@ func (s *flowState) hold(h *holder, key flowKey, packet []byte, r Releaser, now 
 
 // collectDecided moves the verdicts the workers have reached into the cache,
 // so that a flow which sent nothing after its first packet does not stay in
-// pending. TCP verdicts are not cached. Called with s.mu held, on the tun-read
-// goroutine.
+// pending. TCP verdicts are not cached. A verdict is aged from when it was
+// reached, not from when it is collected. Called with s.mu held, on the
+// tun-read goroutine.
 func (s *flowState) collectDecided(now int64) {
 	for _, key := range s.decided {
 		if pf, ok := s.pending[key]; ok && pf.decided {
 			delete(s.pending, key)
 			if key.proto != ipProtoTCP {
-				s.cache.put(key, pf.allow, now)
+				s.cache.put(key, pf.allow, pf.at)
 			}
 		}
 	}
@@ -433,7 +443,7 @@ func (h *holder) judge(s *flowState, key flowKey) {
 			s.heldBytes -= len(p.data)
 		}
 		if len(held) == 0 {
-			pf.decided, pf.allow = true, allow
+			pf.decided, pf.allow, pf.at = true, allow, h.now.Load()
 			s.waiting--
 			s.decided = append(s.decided, key)
 			s.mu.Unlock()
@@ -468,9 +478,11 @@ func (h *holder) send(r Releaser, held []heldPacket) bool {
 
 // refresh passes a packet of a UDP flow whose allowed verdict is still valid
 // but older than refreshAfter, and has the flow judged again unless it already
-// is; the new verdict replaces the old one when the reader next sees the flow.
-// Nothing is held, so an active flow loses nothing when its verdict would have
-// expired, and nothing passes on a verdict older than cacheTTL.
+// is; the new verdict replaces the old one when the reader next sees the flow,
+// aged from its lookup, and if it is refreshAfter old by then the flow is
+// judged again at once. Nothing is held, so an active flow loses nothing when
+// its verdict would have expired, and nothing passes on a verdict older than
+// cacheTTL.
 func (s *flowState) refresh(h *holder, key flowKey, r Releaser, now int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -479,8 +491,10 @@ func (s *flowState) refresh(h *holder, key flowKey, r Releaser, now int64) bool 
 			return true
 		}
 		delete(s.pending, key)
-		s.cache.put(key, pf.allow, now)
-		return pf.allow
+		s.cache.put(key, pf.allow, pf.at)
+		if !pf.allow || !pf.stale(now) {
+			return pf.allow
+		}
 	}
 	if s.waiting >= maxPendingFlows {
 		return true // judged again on a later packet

@@ -221,12 +221,13 @@ func fragments(srcPort int, id uint16) (first, later []byte) {
 // follow it, in order. A later fragment whose first one was not seen is
 // dropped, and so are the fragments of a denied flow.
 func TestFragmentsFollowTheirFlow(t *testing.T) {
-	f := &countingFilter{denySrcPort: 6666}
+	f := &countingFilter{denySrcPort: 6666, gate: make(chan struct{})}
 	rd := install(t, f)
 	first, later := fragments(5555, 0x1234)
 	if rd.check(first) || rd.check(later) {
 		t.Fatal("a fragment passed before its flow was judged")
 	}
+	close(f.gate)
 	rd.settle(t)
 	got := rd.r.released()
 	if len(got) != 2 || !bytes.Equal(got[0], first) || !bytes.Equal(got[1], later) {

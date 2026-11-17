@@ -52,6 +52,10 @@ type netTun struct {
 
 type Net netTun
 
+// UIDFilterExempt marks the netstack as uidfilter.Exempt: its packets come from
+// sockets in this process, which the platform cannot name an owner for.
+func (tun *netTun) UIDFilterExempt() {}
+
 func CreateNetTUN(localAddresses, dnsServers []netip.Addr, mtu int) (tun.Device, *Net, error) {
 	opts := stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},

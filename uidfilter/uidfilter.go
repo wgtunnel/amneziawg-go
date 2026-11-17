@@ -44,6 +44,13 @@ import (
 	"time"
 )
 
+// Exempt is implemented by a tun device whose packets come from a network stack
+// inside this process, such as the gVisor netstack. The platform has no socket
+// to name an owner for, so the filter would drop every packet as unresolved.
+type Exempt interface {
+	UIDFilterExempt()
+}
+
 // PacketFilter decides whether a new outbound flow may enter the tunnel.
 // network is "tcp" or "udp"; src is the originating app endpoint (the tun-side
 // source), dst is the destination. Implementations resolve the owning app UID

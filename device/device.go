@@ -89,6 +89,8 @@ type Device struct {
 		// uidGate is the Strict Split Tunneling state of the packets read
 		// from device; see RoutineReadFromTUN.
 		uidGate uidfilter.Gate
+		// uidExempt skips uidGate for a tun that is uidfilter.Exempt.
+		uidExempt bool
 	}
 
 	ipcMutex sync.RWMutex
@@ -337,6 +339,7 @@ func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger, statusCB fu
 	device.log = logger
 	device.net.bind = bind
 	device.tun.device = tunDevice
+	_, device.tun.uidExempt = tunDevice.(uidfilter.Exempt)
 	mtu, err := device.tun.device.MTU()
 	if err != nil {
 		device.log.Errorf("Trouble determining MTU, assuming default: %v", err)
